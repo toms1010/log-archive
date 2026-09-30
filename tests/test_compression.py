@@ -13,6 +13,7 @@ import tarfile
 
 import pytest
 
+from helpers import find_archive
 from log_archive.compression import DEFAULT_FORMAT, FORMATS, get_format, zstd_available
 from log_archive.utils import UsageError
 
@@ -21,7 +22,7 @@ ALWAYS_AVAILABLE = GZIP_FORMATS | {"none", "xz", "bzip2"}
 
 
 def test_core_formats_are_always_available() -> None:
-    assert ALWAYS_AVAILABLE <= set(FORMATS)
+    assert set(FORMATS) >= ALWAYS_AVAILABLE
 
 
 def test_default_is_gzip() -> None:
@@ -125,7 +126,7 @@ def test_every_registered_format_can_round_trip(readable_tree, tmp_path) -> None
 
 def test_reexport_from_a_subprocess_is_clean() -> None:
     """A fresh interpreter must import the package without warnings or errors."""
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(
         [sys.executable, "-W", "error", "-c", "import log_archive.cli"],
         capture_output=True,
         text=True,
@@ -142,3 +143,36 @@ def test_importlib_is_not_needed_at_runtime() -> None:
     for module in ("archive", "cli", "compression", "verification"):
         importlib.import_module(f"log_archive.{module}")
     assert log_archive.__version__
+
+
+def test_all_commands_work_without_zstd(
+    readable_tree, out_dir, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A build with no zstd must be fully usable, not partially broken.
+
+    This is the state of every supported interpreter below 3.14, so the whole
+    surface is exercised with the format removed from the table. ``FORMATS`` is
+    a real dict and the engine reads it at call time, so removing the entry is
+    exactly what an older interpreter produces.
+    """
+    import log_archive.cli as cli_module
+    import log_archive.compression as compression_module
+
+    monkeypatch.setattr(compression_module, "zstd_available", lambda: False)
+    monkeypatch.delitem(compression_module.FORMATS, "zstd", raising=False)
+    assert "zstd" not in compression_module.FORMATS
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    assert (
+        cli_module.main([str(readable_tree), "-o", str(out_dir), "-q", "--verify", "--checksum"])
+        == 0
+    )
+    archive = find_archive(out_dir)
+    assert archive.exists()
+    assert cli_module.main(["verify", str(archive), "-q"]) == 0
+    assert cli_module.main(["list", "-o", str(out_dir), "-q"]) == 0
+    assert cli_module.main(["info", str(archive), "--no-verify", "-q"]) == 0
+    assert cli_module.main(["cleanup", "-o", str(out_dir), "--keep", "1", "-q"]) == 0
+
+    with pytest.raises(UsageError, match="Unknown compression format"):
+        get_format("zstd")

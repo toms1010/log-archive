@@ -37,6 +37,13 @@ Bugs found in the original implementation, each reproduced before being fixed.
 - **Errors appeared before progress messages.** `stdout` was block buffered
   while `stderr` was not, so `log-archive ... > out.txt` produced an
   out-of-order transcript. Output is now flushed line by line.
+- **The tool failed to import at all on Python 3.11 to 3.13.** The zstd
+  capability probe called `importlib.util.find_spec("compression.zstd")`, which
+  imports the *parent* package first and raises `ModuleNotFoundError` when that
+  parent does not exist, rather than returning `None`. The whole `compression`
+  package is absent before 3.14, so every `log-archive` invocation on a
+  supported interpreter died during import. The probe now catches it, and the
+  capability check lives in one place shared with verification.
 - **A log shrinking mid-read produced a structurally corrupt archive.**
   `tarfile` writes the header before the data, so a truncated read left every
   following member misaligned. This is now detected and the archive is
