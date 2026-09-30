@@ -47,14 +47,21 @@ class CompressionFormat:
         return self.tar_mode != "w"
 
 
-def _zstd_available() -> bool:
-    """Return True when the running interpreter can write zstd tarballs.
+def zstd_available() -> bool:
+    """Return True when this interpreter can write zstd tarballs.
 
-    Probed with :mod:`importlib.util` rather than a plain import so that the
-    check itself needs no ``try``/``except`` and static analysers do not need
-    the module to exist on the minimum supported version.
+    ``compression.zstd`` only exists on CPython 3.14+. Probing it with
+    :func:`importlib.util.find_spec` is not sufficient on its own: for a dotted
+    name, ``find_spec`` imports the *parent* package first, and raises
+    ``ModuleNotFoundError`` when that parent does not exist rather than
+    returning ``None``. On Python 3.11 to 3.13 the entire ``compression``
+    package is absent, so that error has to be caught here or importing this
+    module fails outright.
     """
-    return importlib.util.find_spec("compression.zstd") is not None
+    try:
+        return importlib.util.find_spec("compression.zstd") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 _GZIP = "gzip"
@@ -119,7 +126,7 @@ def _build_formats() -> dict[str, CompressionFormat]:
             label="bzip2",
         ),
     }
-    if _zstd_available():
+    if zstd_available():
         formats["zstd"] = CompressionFormat(
             name="zstd",
             extension=".tar.zst",

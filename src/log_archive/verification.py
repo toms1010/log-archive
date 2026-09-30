@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import bz2
 import gzip
-import importlib.util
 import lzma
 import tarfile
 from collections.abc import Callable, Iterator
@@ -19,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Final, cast
 
+from .compression import zstd_available
 from .utils import human_size
 
 #: Slice size used while reading members back.
@@ -42,9 +42,11 @@ _StreamOpener = Callable[..., IO[bytes]]
 def _zstd_opener() -> _StreamOpener | None:
     """Return an ``open``-compatible zstd reader, or None if unsupported.
 
-    Resolved by name so that the module only has to exist on CPython 3.14+.
+    Delegates the capability check to :mod:`log_archive.compression` so there
+    is a single place that knows ``compression.zstd`` only exists on CPython
+    3.14+, and a single place that has to guard the parent-package import.
     """
-    if importlib.util.find_spec("compression.zstd") is None:
+    if not zstd_available():
         return None
     from compression import zstd
 
