@@ -18,7 +18,7 @@
 
 [Unit]
 Description=Run log-archive daily
-Documentation=https://github.com/example/log-archive
+Documentation=https://github.com/toms1010/log-archive
 
 [Timer]
 # A few minutes past 01:00, by default shortly after the daily rotation window

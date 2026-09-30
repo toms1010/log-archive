@@ -32,6 +32,7 @@ simple, reliable way to back up log directories such as `/var/log`.
 - [Exit Codes](#exit-codes)
 - [Security and Safety](#security-and-safety)
 - [Systemd (Optional)](#systemd-optional)
+- [Architecture](#architecture)
 - [Development](#development)
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
@@ -810,6 +811,146 @@ sudo systemctl edit log-archive.timer
 OnCalendar=weekly
 Persistent=true
 ```
+
+---
+
+## Architecture
+
+Sixteen small modules, no framework, no plugin system, and one rule that shapes
+everything else: **the source tree is untrusted input.** `log-archive` runs as
+root over directories full of output from daemons you do not control, so the
+interesting design decisions are all about what it refuses to do.
+
+### Module layout
+
+Dependencies point one way only: the CLI knows about the engine, the engine
+knows about policy, and the leaf modules know about nothing.
+
+```mermaid
+flowchart TD
+    subgraph iface["Interface"]
+        MAIN["__main__.py<br/>python -m log_archive"]
+        CLI["cli.py<br/>argparse, subcommands, exit codes"]
+    end
+    subgraph engine["Archive engine"]
+        ARCH["archive.py<br/>TreeScanner, streaming writer"]
+    end
+    subgraph decisions["Policy, resolved at runtime"]
+        EXCL["exclusions.py<br/>glob rules"]
+        COMP["compression.py<br/>format table"]
+        CONF["config.py<br/>TOML, validated"]
+    end
+    subgraph support["Support"]
+        STATS["statistics.py<br/>counters, report text"]
+        VERIF["verification.py<br/>integrity, extraction safety"]
+        RETAIN["retention.py<br/>name-matched cleanup"]
+        SUM["checksum.py"]
+        MAN["manifest.py"]
+        LOG["logging_utils.py"]
+        SIG["signals.py"]
+        UTIL["utils.py<br/>errors, exit codes, formatting"]
+    end
+    MAIN --> CLI
+    CLI --> ARCH
+    CLI --> CONF
+    CLI --> STATS
+    CLI --> RETAIN
+    CLI --> SUM
+    CLI --> VERIF
+    CLI --> SIG
+    CLI --> LOG
+    ARCH --> EXCL
+    ARCH --> COMP
+    ARCH --> STATS
+    ARCH --> MAN
+    ARCH --> UTIL
+    VERIF --> COMP
+    VERIF --> UTIL
+    RETAIN --> UTIL
+    LOG --> UTIL
+    SIG --> UTIL
+    CONF --> COMP
+```
+
+<details>
+<summary>Same map as plain text</summary>
+
+```text
+__main__.py  ->  cli.py  ->  archive.py  ->  exclusions.py
+                                  |        ->  compression.py
+                                  |        ->  statistics.py
+                                  |        ->  manifest.py
+                                  |        ->  utils.py
+                            ->  verification.py, retention.py, checksum.py
+                            ->  config.py, logging_utils.py, signals.py
+```
+
+</details>
+
+### One archive run
+
+```mermaid
+flowchart TD
+    A["argv"] --> B["normalise_argv<br/>legacy form becomes archive"]
+    B --> C["argparse"]
+    C --> D["load_config<br/>system, then user, then explicit, CLI wins"]
+    D --> E["validate source<br/>exists, is a directory, is listable"]
+    E --> F["create output directory"]
+    F --> G["resolve compression and exclusion rules"]
+    G --> H{"output inside source?"}
+    H -- yes --> I["prune that subtree<br/>no self-archiving"]
+    H -- no --> J["reserve unique name<br/>O_EXCL, never overwrite"]
+    I --> J
+    J --> K["build_archive, wrapped in<br/>the single cleanup context"]
+    K --> L["TreeScanner yields entries lazily"]
+    L --> M["stream each file into tar<br/>1 MiB slices, O_NOFOLLOW"]
+    M --> N["append MANIFEST.txt<br/>carries the exact file count"]
+    N --> O["optional checksum, then verify"]
+    O --> P{"verification ok?"}
+    P -- no --> Q["remove archive and sidecar"]
+    P -- yes --> R["optional retention"]
+    R --> S["report statistics"]
+    Q --> T["exit 5"]
+    S --> U["exit 0"]
+    E -.-> V
+    F -.-> V
+    K -.-> V
+    O -.-> V
+    V["one cleanup point<br/>remove the incomplete archive,<br/>then re-raise"]
+```
+
+### The decisions that matter
+
+**A single directory scan.** `os.scandir` runs exactly once per directory and
+its results are consumed lazily. A dry run and a real run share the same
+walker, so the plan cannot drift from what a run actually does. Peak memory is
+bounded by one read buffer, not by the size of the archive.
+
+**One cleanup path.** `_partial_archive` wraps the build. It catches
+`BaseException`, so handled errors, unexpected exceptions, `SIGINT` and
+`SIGTERM` all leave nothing behind. There is no second cleanup path to forget.
+`signals.py` funnels both signals into one exception so this stays a single
+exit code.
+
+**Failures carry their exit code.** `UsageError` maps to 2, `ArchiveError` to
+4, and so on. `main()` catches the base class once and returns
+`exc.exit_code`. No code decides a status by inspecting an exception type.
+
+**Unset is not the same as false.** Every option defaults to `None` in argparse
+so that "not passed" stays distinguishable from "passed the default value".
+Without that, a config file could never be overridden from the command line.
+
+**Retention is name-based on purpose.** `retention.py` cannot even be handed a
+source directory, and only considers names matching this tool's own pattern
+that also parse as a real date. That is why a hand-made `backup.tar.gz` in the
+same folder can never be deleted.
+
+**Compression is a table.** `tarfile` names the level differently per codec:
+`compresslevel` for gzip and bzip2, `preset` for xz, `level` for zstd. So each
+format carries its own level keyword, and adding one is a single table entry.
+
+Per-entry decision logic, failure paths, and the full test map are in
+[docs/architecture.md](docs/architecture.md).
 
 ---
 

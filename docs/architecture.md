@@ -62,6 +62,50 @@ The lazy generator is the key structural decision. `TreeScanner` yields
 and `plan_archive()`. A dry run and a real run therefore cannot disagree about
 what they would do, because they are the same code.
 
+## Deciding what happens to one entry
+
+Nearly every security property lives in this one loop, so it is worth reading
+on its own. `TreeScanner._handle` and `_handle_symlink` between them decide
+whether each path is archived, stored as a link, or skipped with a reason.
+
+```mermaid
+flowchart TD
+    S["scandir entry"] --> X{"excluded by a rule?"}
+    X -- yes --> X1["count excluded, do not descend"]
+    X -- no --> L{"symlink?"}
+    L -- yes --> F{"follow enabled?"}
+    F -- no --> L1["store as a link<br/>target is never opened"]
+    F -- yes --> L2{"target inside source<br/>and inode unseen?"}
+    L2 -- no --> L3["skip with a reason"]
+    L2 -- yes --> L4["read the target"]
+    L -- no --> D{"directory?"}
+    D -- yes --> D1["store, then descend"]
+    D -- no --> R{"regular file?"}
+    R -- yes --> O["open O_RDONLY and O_NOFOLLOW<br/>fstat, stream, count"]
+    R -- no --> S2["skip: FIFO, socket, device"]
+    D1 --> S
+    L4 --> D
+    L4 --> R
+    O --> E{"readable?"}
+    E -- no --> E1["skip, count, warn<br/>the run continues"]
+    E -- yes --> E2{"shrank mid-read?"}
+    E2 -- no --> E3["archived"]
+    E2 -- yes --> E4["discard the whole archive<br/>framing cannot be repaired"]
+```
+
+Three behaviours in that diagram are deliberate and were bugs at some point:
+
+* **An unreadable file is skipped, not fatal.** The original script aborted the
+  whole archive on the first `EACCES` and then deleted the partial file, so one
+  root-owned log in `/var/log` meant no backup at all.
+* **A file that grows is fine.** The archived copy is a consistent prefix as of
+  the moment it was read, which is internally valid rather than a torn
+  snapshot.
+* **A file that shrinks is fatal.** `tarfile` writes the header before the
+  data, so a short read misaligns every following member and cannot be
+  repaired mid-stream. Better to lose the run than to leave a plausible-looking
+  corrupt archive.
+
 ## Design decisions
 
 ### One directory scan, ever
