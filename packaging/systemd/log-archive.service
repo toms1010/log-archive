@@ -1,0 +1,74 @@
+# log-archive systemd service (OPTIONAL example)
+#
+# This file is NOT installed or enabled automatically. Copy it yourself if you
+# want scheduled archiving:
+#
+#   sudo cp packaging/systemd/log-archive.service /etc/systemd/system/
+#   sudo cp packaging/systemd/log-archive.timer   /etc/systemd/system/
+#   sudo mkdir -p /var/backups/log-archives
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now log-archive.timer
+#
+# Then check it with:
+#   systemctl list-timers log-archive.timer
+#   journalctl -u log-archive.service
+
+[Unit]
+Description=Archive system log directory
+Documentation=https://github.com/toms1010/log-archive
+# Archiving /var/log needs to happen before the logs are rotated away.
+After=local-fs.target systemd-journald.service
+# Do not run concurrently with a rotation that would truncate files mid-read.
+# Adjust to match your logrotate timer.
+# After=logrotate.timer
+
+[Service]
+Type=oneshot
+
+# Archiving /var/log requires read access to root-owned logs, which in practice
+# means running as root. The tool never needs write access to /var/log and
+# never modifies a source file.
+User=root
+Group=root
+
+# Adjust the source, destination, and retention to taste. The destination must
+# be a root-writable directory that is NOT inside /var/log, or the archives
+# would start appearing in the next run's source tree (they are pruned, but
+# there is no reason to make the tool work for it).
+ExecStart=/usr/local/bin/log-archive /var/log \
+    --output /var/backups/log-archives \
+    --verify \
+    --checksum \
+    --manifest \
+    --keep 30
+
+# --verify already removes a corrupt archive, so a non-zero exit genuinely
+# means no usable backup was produced.
+SuccessExitStatus=0
+
+TimeoutStartSec=3600
+
+# --- Hardening -------------------------------------------------------------
+# The tool only needs to read /var/log and write its own output directory.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# Allow exactly one writable path, the archive destination.
+ReadWritePaths=/var/backups/log-archives
+# The output above is the only path the service may write to. The tool also
+# writes archive.log next to the archives, which is inside that path.
+
+# System logs are not here, so hide everything else.
+ProtectProc=invisible
+ProcSubset=pid
+
+[Install]
+WantedBy=multi-user.target

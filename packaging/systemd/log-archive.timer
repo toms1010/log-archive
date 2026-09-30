@@ -1,0 +1,41 @@
+# log-archive systemd timer (OPTIONAL example)
+#
+# Not installed or enabled automatically. See log-archive.service for install
+# instructions.
+#
+# For a weekly schedule instead of daily:
+#
+#   sudo systemctl edit log-archive.timer
+#
+#   [Timer]
+#   OnCalendar=weekly
+#   Persistent=true
+#
+# Useful checks:
+#   systemctl list-timers log-archive.timer
+#   systemctl cat log-archive.timer
+#   journalctl -u log-archive.service
+
+[Unit]
+Description=Run log-archive daily
+Documentation=https://github.com/example/log-archive
+
+[Timer]
+# A few minutes past 01:00, by default shortly after the daily rotation window
+# so files are not being truncated while they are read.
+OnCalendar=*-*-* 01:05:00
+
+# Run a missed job as soon as the machine is back, e.g. after a reboot.
+# This is what makes the timer useful on laptops and VPS instances.
+Persistent=true
+
+# Add a small random delay so many machines do not all hit the disk at 01:05.
+RandomizedDelaySec=15m
+
+# Accuracy is not important; power management is.
+AccuracySec=1m
+
+Unit=log-archive.service
+
+[Install]
+WantedBy=timers.target

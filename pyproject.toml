@@ -1,0 +1,123 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "log-archive"
+description = "A secure Linux CLI utility for creating, verifying, and managing compressed archives of log directories."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dynamic = ["version"]
+keywords = ["linux", "logs", "backup", "archiving", "tar", "sysadmin", "cli"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: System :: Archiving :: Backup",
+    "Topic :: System :: Logging",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+# No runtime dependencies, by design. Everything used here is in the standard
+# library, so the tool can be dropped onto a locked down server without a
+# dependency resolver run.
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "build>=1.2",
+]
+
+[project.scripts]
+log-archive = "log_archive.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/toms1010/log-archive"
+Changelog = "https://github.com/toms1010/log-archive/blob/main/CHANGELOG.md"
+Issues = "https://github.com/toms1010/log-archive/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "log_archive.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+log_archive = ["py.typed"]
+
+# --------------------------------------------------------------------------
+# Static analysis
+# --------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = [".venv", "build", "dist"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # import sorting
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "C4",  # comprehensions
+    "SIM", # simplify
+    "RUF", # ruff specific
+]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "SIM108", # ternaries are not always clearer
+    "RUF001", # allow unicode in docstrings and user facing text
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = true
+warn_unreachable = true
+show_error_codes = true
+# tomllib gained its typeshed entry late; the runtime check is in the code.
+disallow_any_explicit = false
+
+[[tool.mypy.overrides]]
+module = ["tomli.*"]
+ignore_missing_imports = true
+
+# ``compression.zstd`` only exists on CPython 3.14+, so mypy is told to ignore
+# it while still checking the standard 3.11 floor. The runtime code guards the
+# import itself.
+[[tool.mypy.overrides]]
+module = ["compression.*"]
+ignore_missing_imports = true
+
+# --------------------------------------------------------------------------
+# Tests
+# --------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "root: test requires root privileges to exercise permission errors",
+]
+filterwarnings = ["error"]
